@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test} from "lib/forge-std/src/Test.sol";
 import {FundFlow} from "../src/FundFlow.sol";
 
 contract FundFlowTest is Test {
@@ -11,6 +11,7 @@ contract FundFlowTest is Test {
 
     function setUp() public {
         ff = new FundFlow();
+        ff.addCreator(address(this)); 
         vm.deal(alice, 100 ether);
         vm.deal(bob, 100 ether);
         ff.createProject("Test", "Desc", 10 ether, uint64(block.timestamp + 7 days));
@@ -95,4 +96,97 @@ contract FundFlowTest is Test {
         vm.expectRevert(FundFlow.InvalidProject.selector);
         ff.getFundingPercentage(99);
     }
+    function test_OnlyAdminCanAddCreator() public {
+    vm.prank(alice);
+    vm.expectRevert(FundFlow.NotAdmin.selector);
+    ff.addCreator(alice);
+    }
+
+    function test_AdminAddsAndRemovesCreator() public {
+        ff.addCreator(alice);
+        assertTrue(ff.isCreator(alice));
+        ff.removeCreator(alice);
+        assertFalse(ff.isCreator(alice));
+    }
+
+    function test_NonCreatorCannotCreateProject() public {
+        vm.prank(alice);
+        vm.expectRevert(FundFlow.NotCreator.selector);
+        ff.createProject("X", "Y", 1 ether, uint64(block.timestamp + 1 days));
+    }
+
+    function test_FailedCreateDoesNotIncrementCount() public {
+        vm.prank(alice);
+        vm.expectRevert(FundFlow.NotCreator.selector);
+        ff.createProject("X", "Y", 1 ether, uint64(block.timestamp + 1 days));
+        assertEq(ff.totalProjectsCreated(), 1); // still just the setUp project
+    }
+
+    function test_FinalizeBeforeDeadlineReverts() public {
+        vm.expectRevert(FundFlow.NotFinalizable.selector);
+        ff.finalizeProject(0);
+    }
+
+    function test_FinalizeMarksFailedOnce() public {
+        vm.prank(alice);
+        ff.fundProject{value: 4 ether}(0);
+        vm.warp(block.timestamp + 8 days);
+
+        ff.finalizeProject(0);
+        assertEq(ff.getFailedProjectsCount(), 1);
+        assertEq(uint8(ff.getProject(0).status), uint8(FundFlow.Status.Failed));
+
+        vm.expectRevert(FundFlow.NotActive.selector);   // repeated call rejected
+        ff.finalizeProject(0);
+        assertEq(ff.getFailedProjectsCount(), 1);       // still 1
+    }
+
+    function test_FundedProjectCannotBeFinalizedAsFailed() public {
+        vm.prank(alice);
+        ff.fundProject{value: 10 ether}(0);
+        vm.warp(block.timestamp + 8 days);
+
+        vm.expectRevert(FundFlow.NotActive.selector);
+        ff.finalizeProject(0);
+        assertEq(ff.getFailedProjectsCount(), 0);
+        assertEq(ff.getSuccessfulProjectsCount(), 1);
+    }
+
+    function test_ContributorClaimsRefundAfterFailure() public {
+        vm.prank(alice);
+        ff.fundProject{value: 4 ether}(0);
+        vm.warp(block.timestamp + 8 days);
+        ff.finalizeProject(0);
+
+        vm.prank(alice);
+        ff.claimRefund(0);
+        assertEq(alice.balance, 100 ether);
+
+        vm.prank(alice);
+        vm.expectRevert(FundFlow.NothingToWithdraw.selector); // no double refund
+        ff.claimRefund(0);
+    }
+
+    function test_CreatorClaimsFundsOnce() public {
+        vm.prank(alice);
+        ff.fundProject{value: 10 ether}(0);
+
+        uint256 before = address(this).balance;
+        ff.claimFunds(0);
+        assertEq(address(this).balance - before, 10 ether);
+
+        vm.expectRevert(FundFlow.AlreadyClaimed.selector);
+        ff.claimFunds(0);
+    }
+
+    function test_NonCreatorCannotClaimFunds() public {
+        vm.prank(alice);
+        ff.fundProject{value: 10 ether}(0);
+        vm.prank(bob);
+        vm.expectRevert(FundFlow.NotProjectCreator.selector);
+        ff.claimFunds(0);
+    }
+
+    // The test contract is the project creator, so it must be able to receive ETH
+    receive() external payable {}
 }

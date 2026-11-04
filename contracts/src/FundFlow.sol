@@ -14,7 +14,9 @@ contract FundFlow {
         uint256 raised;
         uint64 deadline;
         Status status;
+        bool claimed;
     }
+   
 
     // ───────── State ─────────
     address public admin;
@@ -36,6 +38,8 @@ contract FundFlow {
     event ProjectFailed(uint256 indexed id);
     event CreatorAdded(address indexed creator);
     event CreatorRemoved(address indexed creator);
+    event FundsClaimed(uint256 indexed id, address indexed creator, uint256 amount);
+    event Refunded(uint256 indexed id, address indexed funder, uint256 amount);
 
     // ───────── Errors ─────────
     error NotAdmin();
@@ -48,6 +52,11 @@ contract FundFlow {
     error InsufficientBalance();
     error TransferFailed();
     error Reentrancy();
+    error NotProjectCreator();
+    error NotFinalizable();
+    error NotFailed();
+    error NotFunded();
+    error AlreadyClaimed();
 
     // ───────── Modifiers ─────────
     modifier nonReentrant() {
@@ -59,6 +68,15 @@ contract FundFlow {
 
     modifier validProject(uint256 id) {
         if (id >= totalProjectsCreated) revert InvalidProject();
+        _;
+    }
+    modifier onlyAdmin() {
+        if (msg.sender != admin) revert NotAdmin();
+        _;
+    }
+
+    modifier onlyCreator() {
+        if (!creators[msg.sender]) revert NotCreator();
         _;
     }
 
@@ -74,7 +92,7 @@ contract FundFlow {
         string calldata description,
         uint256 goal,
         uint64 deadline
-    ) external returns (uint256 id) {
+    ) external onlyCreator returns (uint256 id) {
         if (bytes(title).length == 0 || goal == 0 || deadline <= block.timestamp) {
             revert InvalidInput();
         }
@@ -87,7 +105,8 @@ contract FundFlow {
             goal: goal,
             raised: 0,
             deadline: deadline,
-            status: Status.Active
+            status: Status.Active,
+            claimed: false
         });
         totalProjectsCreated = id + 1; // only reached if every check above passed
 
@@ -144,6 +163,60 @@ contract FundFlow {
         // ── Interaction ──
         _send(msg.sender, amount);
     }
+    // ───────── Admin ─────────
+    function addCreator(address creator) external onlyAdmin returns (bool) {
+        if (creator == address(0)) revert InvalidInput();
+        creators[creator] = true;
+        emit CreatorAdded(creator);
+    }
+
+    function removeCreator(address creator) external onlyAdmin {
+        creators[creator] = false;
+        emit CreatorRemoved(creator);
+    }
+    // ───────── Outcome tracking ─────────
+/// @notice Anyone can call this after the deadline. It marks the project Failed
+///         only if it is still Active AND below its goal, so each project is counted once.
+    function finalizeProject(uint256 id) external validProject(id) {
+        Project storage p = projects[id];
+
+        if (p.status != Status.Active) revert NotActive();            // already Funded or Failed
+        if (block.timestamp < p.deadline) revert NotFinalizable();    // deadline not reached yet
+        if (p.raised >= p.goal) revert NotFinalizable();              // defensive: funded projects never stay Active
+
+        p.status = Status.Failed;
+        totalFailedProjects++;
+        emit ProjectFailed(id);
+    }
+    // ───────── Settlement ─────────
+/// @notice Creator collects the ETH of a successfully funded project (once).
+    function claimFunds(uint256 id) external nonReentrant validProject(id) {
+        Project storage p = projects[id];
+
+        if (msg.sender != p.creator) revert NotProjectCreator();
+        if (p.status != Status.Funded) revert NotFunded();
+        if (p.claimed) revert AlreadyClaimed();
+
+        p.claimed = true;
+        emit FundsClaimed(id, msg.sender, p.raised);
+        _send(msg.sender, p.raised);
+    }
+
+    /// @notice Contributors recover their money from a Failed project.
+    function claimRefund(uint256 id) external nonReentrant validProject(id) {
+        Project storage p = projects[id];
+
+        if (p.status != Status.Failed) revert NotFailed();
+
+        uint256 amount = contributions[id][msg.sender];
+        if (amount == 0) revert NothingToWithdraw();
+
+        contributions[id][msg.sender] = 0;
+        emit Refunded(id, msg.sender, amount);
+        _send(msg.sender, amount);
+    }
+
+        
 
     // ───────── Views ─────────
     /// @notice Funding progress in basis points: 10000 = 100.00%, 2550 = 25.50%.
@@ -155,6 +228,17 @@ contract FundFlow {
 
     function getProject(uint256 id) external view validProject(id) returns (Project memory) {
         return projects[id];
+    }
+    function isCreator(address creator) external view returns (bool) {
+        return creators[creator];
+    }
+
+    function getSuccessfulProjectsCount() external view returns (uint256) {
+        return totalSuccessfulProjects;
+    }
+
+    function getFailedProjectsCount() external view returns (uint256) {
+        return totalFailedProjects;
     }
 
     // ───────── Internal ─────────
