@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "lib/forge-std/src/Test.sol";
+import {Test} from "../lib/forge-std/src/Test.sol";
 import {FundFlow} from "../src/FundFlow.sol";
 /// @dev A malicious contributor that tries to re-enter FundFlow when it receives ETH.
 contract Attacker {
