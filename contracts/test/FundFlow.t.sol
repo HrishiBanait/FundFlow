@@ -221,6 +221,136 @@ contract FundFlowTest is Test {
         vm.expectRevert(FundFlow.NotProjectCreator.selector);
         ff.claimFunds(0);
     }
+        // ───────── Extra unit tests ─────────
+    function test_FundAfterDeadlineReverts() public {
+        vm.warp(block.timestamp + 8 days);
+        vm.prank(alice);
+        vm.expectRevert(FundFlow.DeadlinePassed.selector);
+        ff.fundProject{value: 1 ether}(0);
+    }
+
+    function test_ZeroValueFundReverts() public {
+        vm.prank(alice);
+        vm.expectRevert(FundFlow.InvalidInput.selector);
+        ff.fundProject{value: 0}(0);
+    }
+
+    function test_CreateProjectInvalidInputReverts() public {
+        vm.expectRevert(FundFlow.InvalidInput.selector);
+        ff.createProject("", "d", 1 ether, uint64(block.timestamp + 1 days));   // empty title
+
+        vm.expectRevert(FundFlow.InvalidInput.selector);
+        ff.createProject("T", "d", 0, uint64(block.timestamp + 1 days));        // zero goal
+
+        vm.expectRevert(FundFlow.InvalidInput.selector);
+        ff.createProject("T", "d", 1 ether, uint64(block.timestamp));           // deadline not in future
+
+        assertEq(ff.totalProjectsCreated(), 1);
+    }
+
+    function test_ClaimRefundBeforeFinalizeReverts() public {
+        vm.prank(alice);
+        ff.fundProject{value: 4 ether}(0);
+        vm.warp(block.timestamp + 8 days);   // expired, but nobody has called finalizeProject yet
+        vm.prank(alice);
+        vm.expectRevert(FundFlow.NotFailed.selector);
+        ff.claimRefund(0);
+    }
+
+    function test_ClaimRefundOnFundedProjectReverts() public {
+        vm.prank(alice);
+        ff.fundProject{value: 10 ether}(0);
+        vm.prank(alice);
+        vm.expectRevert(FundFlow.NotFailed.selector);
+        ff.claimRefund(0);
+    }
+
+    // ───────── Reentrancy ─────────
+    function test_ReentrancyOnWithdrawIsBlocked() public {
+        vm.prank(bob);
+        ff.fundProject{value: 5 ether}(0);          // an innocent user's money the attacker would love to steal
+
+        Attacker atk = new Attacker(ff);
+        vm.prank(alice);
+        atk.fundAndWithdraw{value: 4 ether}(0);
+
+        assertTrue(atk.reenterAttempted());
+        assertFalse(atk.reenterSucceeded());
+        assertEq(address(atk).balance, 4 ether);    // got back exactly what it put in
+        assertEq(address(ff).balance, 5 ether);     // bob's money untouched
+        assertEq(ff.getProject(0).raised, 5 ether);
+    }
+
+    function test_ReentrancyOnRefundIsBlocked() public {
+        vm.prank(alice);
+        ff.fundProject{value: 8 ether}(0);
+
+        Attacker atk = new Attacker(ff);
+        vm.prank(bob);
+        atk.overfund{value: 3 ether}(0);            // 2 accepted, 1 refunded -> triggers receive()
+
+        assertTrue(atk.reenterAttempted());
+        assertFalse(atk.reenterSucceeded());
+        assertEq(address(atk).balance, 1 ether);
+        assertEq(address(ff).balance, 10 ether);
+        assertEq(ff.getProject(0).raised, 10 ether);
+        assertEq(ff.contributions(0, address(atk)), 2 ether);
+    }
+
+    // ───────── Fuzz tests ─────────
+    function testFuzz_NeverOverfunds(uint256 a, uint256 b) public {
+        a = bound(a, 1, 30 ether);
+        b = bound(b, 1, 30 ether);
+
+        vm.prank(alice);
+        ff.fundProject{value: a}(0);
+        if (ff.getProject(0).status == FundFlow.Status.Active) {
+            vm.prank(bob);
+            ff.fundProject{value: b}(0);
+        }
+
+        FundFlow.Project memory p = ff.getProject(0);
+        assertLe(p.raised, p.goal);
+        assertEq(address(ff).balance, p.raised);                         // contract holds exactly what was accepted
+        assertEq(alice.balance + bob.balance + p.raised, 200 ether);     // no ETH created or lost
+    }
+
+    function testFuzz_PercentageMatchesFormula(uint256 amount) public {
+        amount = bound(amount, 1, 10 ether);
+        vm.prank(alice);
+        ff.fundProject{value: amount}(0);
+        assertEq(ff.getFundingPercentage(0), (amount * 10_000) / 10 ether);
+    }
+
+    function testFuzz_WithdrawRestoresState(uint256 amount) public {
+        amount = bound(amount, 1, 9 ether);   // stay below goal so project remains Active
+        vm.startPrank(alice);
+        ff.fundProject{value: amount}(0);
+        ff.withdrawContribution(0);
+        vm.stopPrank();
+
+        assertEq(alice.balance, 100 ether);
+        assertEq(ff.getProject(0).raised, 0);
+        assertEq(address(ff).balance, 0);
+    }
+
+    function testFuzz_WithdrawOnlyBeforeDeadline(uint256 t) public {
+        vm.prank(alice);
+        ff.fundProject{value: 4 ether}(0);
+
+        uint256 deadline = ff.getProject(0).deadline;
+        t = bound(t, block.timestamp, deadline + 30 days);
+        vm.warp(t);
+
+        vm.prank(alice);
+        if (t < deadline) {
+            ff.withdrawContribution(0);
+            assertEq(ff.contributions(0, alice), 0);
+        } else {
+            vm.expectRevert(FundFlow.DeadlinePassed.selector);
+            ff.withdrawContribution(0);
+        }
+    }
 
     // The test contract is the project creator, so it must be able to receive ETH
     receive() external payable {}

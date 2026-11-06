@@ -1,41 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// @dev A malicious contributor that tries to re-enter FundFlow when it receives ETH.
-contract Attacker {
-    FundFlow public ff;
-    uint256 public id;
-    uint8 public mode; // 0 = re-enter withdraw, 1 = re-enter fund
-    bool public reenterAttempted;
-    bool public reenterSucceeded;
 
-    constructor(FundFlow _ff) {
-        ff = _ff;
-    }
-
-    function fundAndWithdraw(uint256 _id) external payable {
-        id = _id;
-        mode = 0;
-        ff.fundProject{value: msg.value}(_id);
-        ff.withdrawContribution(_id);
-    }
-
-    function overfund(uint256 _id) external payable {
-        id = _id;
-        mode = 1;
-        ff.fundProject{value: msg.value}(_id);
-    }
-
-    receive() external payable {
-        if (reenterAttempted) return;
-        reenterAttempted = true;
-        if (mode == 0) {
-            try ff.withdrawContribution(id) { reenterSucceeded = true; } catch {}
-        } else {
-            try ff.fundProject{value: 1 wei}(id) { reenterSucceeded = true; } catch {}
-        }
-    }
-}
 
 /// @title FundFlow - small-scale decentralized crowdfunding
 contract FundFlow {
@@ -200,7 +166,7 @@ contract FundFlow {
         _send(msg.sender, amount);
     }
     // ───────── Admin ─────────
-    function addCreator(address creator) external onlyAdmin returns (bool) {
+    function addCreator(address creator) external onlyAdmin {
         if (creator == address(0)) revert InvalidInput();
         creators[creator] = true;
         emit CreatorAdded(creator);

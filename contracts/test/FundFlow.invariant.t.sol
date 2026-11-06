@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test} from "lib/forge-std/src/Test.sol";
 import {FundFlow} from "../src/FundFlow.sol";
 
 /// @dev Makes random, valid-ish calls to FundFlow. The handler is admin AND creator of 3 projects.
