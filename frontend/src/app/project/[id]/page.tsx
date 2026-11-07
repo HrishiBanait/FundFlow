@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { Suspense } from "react";
 import { useAccount, useReadContracts } from "wagmi";
 import { formatEther, zeroAddress } from "viem";
 import { contractBase } from "@/lib/contract";
@@ -17,7 +18,7 @@ function Box({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function ProjectPage() {
+function ProjectDetailContent() {
   const { id: idParam } = useParams<{ id: string }>();
   const valid = /^\d+$/.test(idParam);
   const id = valid ? BigInt(idParam) : BigInt(0);
@@ -105,5 +106,13 @@ export default function ProjectPage() {
         onChanged={() => refetch()}
       />
     </div>
+  );
+}
+
+export default function ProjectPage() {
+  return (
+    <Suspense fallback={<p className="text-slate-500">Loading campaign…</p>}>
+      <ProjectDetailContent />
+    </Suspense>
   );
 }

@@ -2,7 +2,7 @@ import { sepolia } from "wagmi/chains";
 import { fundFlowAbi } from "./abi";
 
 export const TARGET_CHAIN = sepolia; // for local Anvil development, use `foundry` from "wagmi/chains" instead
-export const CONTRACT_ADDRESS = "0x4ca96ACFcD922B47af3a784a14a0EB495b1729fC" as const;
+export const CONTRACT_ADDRESS = "0x578A2bd5b7606FaEFD847C6C24b0E34C9bdd5B4C" as const;
 
 export const contractBase = {
   abi: fundFlowAbi,
