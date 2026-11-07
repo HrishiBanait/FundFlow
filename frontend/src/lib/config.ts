@@ -7,7 +7,9 @@ export const config = createConfig({
   connectors: [injected()], // MetaMask and other browser wallets
   transports: {
     [foundry.id]: http("http://127.0.0.1:8545"),
-    [sepolia.id]: http(),
+    [sepolia.id]: http(
+      process.env.NEXT_PUBLIC_SEPOLIA_RPC ?? "https://ethereum-sepolia-rpc.publicnode.com",
+    ),
   },
   ssr: true,
 });

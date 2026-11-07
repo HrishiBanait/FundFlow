@@ -1,0 +1,8 @@
+{
+  "transactions": [
+    {
+      "rpc": "https://ethereum-sepolia-rpc.publicnode.com"
+    }
+  ],
+  "recovery_generation": "0x1e75af52199583661838a4cc30497d3b23b3bca65b89c6b311e283fac2f50f24"
+}

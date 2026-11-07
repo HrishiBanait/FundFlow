@@ -1,27 +1,40 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { useAccount , useBlock, useReadContract, useReadContracts } from "wagmi";
+import { useAccount, useBlock, useReadContract, useReadContracts } from "wagmi";
 import { TARGET_CHAIN, contractBase } from "./contract";
 import type { Project } from "./utils";
 import { zeroAddress } from "viem";
 
-export const POLL_MS = 4000;
+export const POLL_MS = 10000;
 
 /** Current time in unix seconds, based on the latest block's timestamp and ticking every second. */
 export function useChainNow() {
   const block = useBlock({ chainId: TARGET_CHAIN.id, query: { refetchInterval: POLL_MS } });
   const blockTs = block.data?.timestamp;
-  // how far the chain clock is from this computer's clock
-  const offsetMs = useMemo(
-    () => (blockTs !== undefined ? Number(blockTs) * 1000 - Date.now() : 0),
-    [blockTs],
-  );
-  const [, setTick] = useState(0);
+
+  // Track whether we are mounted on the client to avoid SSR/prerender mismatch
+  const [mounted, setMounted] = useState(false);
+  const [tick, setTick] = useState(0);
+
   useEffect(() => {
+    setMounted(true);
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
-  return Math.floor((Date.now() + offsetMs) / 1000);
+
+  // Compute offset only when mounted and blockTs is available
+  const offsetMs = useMemo(() => {
+    if (!mounted || blockTs === undefined) return 0;
+    return Number(blockTs) * 1000 - Date.now();
+  }, [mounted, blockTs]);
+
+  // Return 0 (or a safe fallback) during SSR/prerender
+  if (!mounted) {
+    return 0;
+  }
+
+  // Depend on `tick` so this recalculates every second
+  return Math.floor((Date.now() + offsetMs + tick * 0) / 1000);
 }
 
 export function useProjects() {
